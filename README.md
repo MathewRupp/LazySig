@@ -1,16 +1,18 @@
 # LazySig
 
-A terminal-based UI for quickly capturing and analyzing SPI/I2C bus data using sigrok and fx2lafw-compatible logic analyzers.
+A lazygit-inspired terminal UI for quickly capturing and analyzing SPI/I2C/UART bus data using sigrok and fx2lafw-compatible logic analyzers.
 
 ## Features
 
-- Interactive TUI for configuring captures
-- Support for SPI and I2C protocols
-- Configurable pin mappings
-- Hardware triggering (CS falling edge for SPI)
-- CSV output with decoded protocol data
-- Optional filtering of empty frames
-- Preset and custom capture durations
+- **Modern panel-based TUI** - Lazygit-inspired interface with bordered panels
+- **Multiple protocol support** - SPI, I2C, and UART
+- **Multi-device support** - Automatic detection and selection of connected analyzers
+- **Quick keyboard shortcuts** - One-key access to common operations
+- **Configurable sample rates** - 48 MHz down to 1 MHz with custom option
+- **Hardware triggering** - CS falling edge for SPI
+- **CSV output** - Decoded protocol data with timestamps
+- **Frame filtering** - Optional removal of empty data frames
+- **Live output preview** - View captured data directly in the UI
 
 ## Requirements
 
@@ -57,46 +59,108 @@ fx2lafw:conn=1.43 - fx2lafw - fx2lafw
 
 ## Installation
 
+### Option 1: Install from Source
+
 ```bash
-cd /path/to/LASetup
-go build
+# Clone the repository
+git clone https://github.com/yourusername/lazysig.git
+cd lazysig
+
+# Build and install
+go build -o lazysig
 sudo mv lazysig /usr/local/bin/
+
+# Verify installation
+lazysig --help
 ```
 
-Or run directly:
+### Option 2: Build and Run Locally
+
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/lazysig.git
+cd lazysig
+
+# Build
+go build -o lazysig
+
+# Run directly
 ./lazysig
+```
+
+### Option 3: Go Install (if published)
+
+```bash
+go install github.com/yourusername/lazysig@latest
 ```
 
 ## Usage
 
-1. **Start the application:**
-   ```bash
-   lazysig
-   ```
+### Quick Start
 
-2. **Select protocol:**
-   - Choose between SPI or I2C
+```bash
+lazysig
+```
 
-3. **Configure pins:**
-   - For SPI: CLK, MOSI, MISO, CS, CPOL, CPHA
-   - For I2C: SDA, SCL, Address
-   - Default pins work with standard fx2lafw channel mappings (D0-D3)
+### Interface Layout
 
-4. **Set capture settings:**
-   - Sample Rate: Default 24 MHz
-   - Duration: Choose from presets (2000ms, 1000ms, 500ms, 250ms) or custom
-   - Output File: CSV filename for decoded data
-   - Filter Empty: Toggle to remove frames without valid data
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ┌─ Devices ────┐ ┌─ Output ─────────────────────────────┐  │
+│ │ • fx2lafw    │ │ time,mosi,miso                       │  │
+│ │   USB 1.43   │ │ 0.000000042,88,00                    │  │
+│ └──────────────┘ │ 0.000000125,00,E4                    │  │
+│ ┌─ Config ─────┐ │ ...                                  │  │
+│ │ Protocol: SPI│ └──────────────────────────────────────┘  │
+│ │ CLK:  D2     │ ┌─ Status ──────────────────────────────┐ │
+│ │ MOSI: D1     │ │ Ready                                 │ │
+│ └──────────────┘ └───────────────────────────────────────┘ │
+│ ┌─ Capture ────┐                                           │
+│ │ Rate: 24 MHz │                                           │
+│ │ Duration: 500│                                           │
+│ └──────────────┘                                           │
+└─────────────────────────────────────────────────────────────┘
+s: start • f: filter • d: duration • tab: next • q: quit
+```
 
-5. **Start capture:**
-   - For SPI: Waits for CS falling edge trigger
-   - For I2C: Starts immediately
-   - Animated progress bar shows capture status
+### Keyboard Shortcuts
 
-6. **View results:**
-   - Output saved to specified CSV file
-   - Press q or Esc to exit
+#### Quick Actions
+- **s** - Start capture immediately
+- **f** - Toggle frame filtering
+- **d** - Jump to duration selector
+- **q** - Quit application
+
+#### Navigation
+- **Tab/Shift+Tab** - Cycle through panels
+- **1-5** - Jump directly to panel (1=Devices, 2=Config, 3=Capture, 4=Output, 5=Status)
+- **↑↓ or j/k** - Navigate within panel
+- **Enter** - Select/Edit field
+- **Esc** - Cancel edit
+
+### Configuration
+
+1. **Select Device** (Panel 1)
+   - Auto-detects connected logic analyzers
+   - Press Enter to select
+
+2. **Configure Protocol** (Panel 2)
+   - Press Enter on "Protocol" to cycle: SPI → I2C → UART
+   - Configure pins for selected protocol:
+     - **SPI**: CLK, MOSI, MISO, CS, CPOL, CPHA
+     - **I2C**: SDA, SCL, Address
+     - **UART**: TX, RX, Baud Rate
+
+3. **Set Capture Settings** (Panel 3)
+   - **Sample Rate**: 48 MHz to 1 MHz (or custom)
+   - **Duration**: Presets (2s, 1s, 500ms, 250ms) or custom
+   - **Output File**: CSV filename
+   - **Filter**: Toggle empty frame filtering
+   - Press Enter on "Start Capture" or press **s** anywhere
+
+4. **View Output** (Panel 4)
+   - Live preview of captured data
+   - Full data saved to CSV file
 
 ## Output Format
 
@@ -114,21 +178,21 @@ time,scl,sda
 0.000000125,Address write: 50,
 ```
 
-## Pin Naming
+### UART CSV
+```csv
+time,tx,rx
+0.000000042,48,
+0.000000125,,65
+```
+
+## Default Pin Mappings
 
 - **D0-D7**: Physical channel pins on fx2lafw device
-- Pins are mapped to protocol signals (e.g., D2=CLK for SPI)
-- Default mappings:
-  - SPI: CLK=D2, MOSI=D1, MISO=D0, CS=D3
-  - I2C: SDA=D0, SCL=D1
+- **SPI**: CLK=D2, MOSI=D1, MISO=D0, CS=D3
+- **I2C**: SDA=D0, SCL=D1
+- **UART**: TX=D0, RX=D1
 
-## Keyboard Controls
-
-- **↑/↓ or k/j**: Navigate options
-- **Enter**: Select/Edit field
-- **Tab**: Next screen (where applicable)
-- **Esc**: Cancel edit or quit
-- **q**: Quit application
+All pins are configurable through the UI.
 
 ## Troubleshooting
 
@@ -147,6 +211,12 @@ lsusb | grep -i fx2
 - Check trigger is appropriate (CS falling edge for SPI)
 - Ensure target device is active during capture window
 - Increase capture duration
+- Try higher sample rate (8 MHz minimum recommended for most protocols)
+
+**Sample rate issues:**
+- Use 8 MHz or higher for reliable decoding
+- For high-speed protocols (>1 MHz), use 24-48 MHz
+- Lower sample rates may miss edges or decode incorrectly
 
 **Permission errors:**
 ```bash
@@ -156,10 +226,37 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
+## Tips
+
+- **Quick workflow**: Press `1` to select device, `2` to set protocol, `3` to configure capture, then `s` to start
+- **Custom values**: Select "Custom..." in dropdowns to enter any value
+- **Panel navigation**: Use number keys (1-5) to jump directly to any panel
+- **Frame filtering**: Enable with `f` to remove empty/noise frames from SPI captures
+
+## Project Structure
+
+```
+LazySig/
+├── main.go      # TUI interface and event handling
+├── panels.go    # Panel rendering functions
+├── capture.go   # sigrok-cli integration and decoding
+├── go.mod       # Go module dependencies
+└── README.md    # This file
+```
+
+## Dependencies
+
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) - Terminal UI framework
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
+- [sigrok-cli](https://sigrok.org/) - Logic analyzer backend
+
 ## License
 
 MIT
 
-## Author
+## Contributing
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+Issues and pull requests welcome! Please ensure:
+1. Code follows existing style
+2. All protocols (SPI/I2C/UART) are tested
+3. README is updated for new features
