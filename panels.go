@@ -2,8 +2,29 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
+
+func formatSampleRate(rate string) string {
+	// Handle special case
+	if rate == "Custom..." {
+		return rate
+	}
+
+	// Convert sample rate to human readable format
+	rateInt, err := strconv.Atoi(rate)
+	if err != nil {
+		return rate
+	}
+
+	if rateInt >= 1000000 {
+		return fmt.Sprintf("%d MHz", rateInt/1000000)
+	} else if rateInt >= 1000 {
+		return fmt.Sprintf("%d kHz", rateInt/1000)
+	}
+	return fmt.Sprintf("%d Hz", rateInt)
+}
 
 func (m model) renderDevicesPanel(width, height int) string {
 	isActive := m.activePanel == panelDevices
@@ -115,8 +136,11 @@ func (m model) renderCapturePanel(width, height int) string {
 	var content strings.Builder
 	content.WriteString(panelTitleStyle.Render("Capture") + "\n\n")
 
+	// Format sample rate nicely
+	sampleRateDisplay := formatSampleRate(m.sampleRate)
+
 	fields := []struct{ label, value string }{
-		{"Rate", m.sampleRate + "Hz"},
+		{"Rate", sampleRateDisplay},
 		{"Duration", m.duration},
 		{"Output", m.outputFile},
 	}
@@ -126,21 +150,32 @@ func (m model) renderCapturePanel(width, height int) string {
 		value := field.value
 		if isActive && m.cursor == i {
 			cursor = ">"
-			if i == 1 && m.selectingDuration {
+			if i == 0 && m.selectingSampleRate {
+				value = selectedStyle.Render(value + " ▼")
+			} else if i == 1 && m.selectingDuration {
 				value = selectedStyle.Render(value + " ▼")
 			} else if m.editing {
-				if i == 0 {
-					value = m.editBuffer + "█"
-				} else {
-					value = m.editBuffer + "█"
-				}
+				value = m.editBuffer + "█"
 			} else {
 				value = selectedStyle.Render(value)
 			}
 		}
 		content.WriteString(fmt.Sprintf("%s %-8s: %s\n", cursor, field.label, value))
 
-		// Show dropdown
+		// Show sample rate dropdown
+		if i == 0 && isActive && m.cursor == 0 && m.selectingSampleRate {
+			for j, opt := range m.sampleRateOptions {
+				dropdownCursor := "  "
+				optText := formatSampleRate(opt)
+				if j == m.sampleRateCursor {
+					dropdownCursor = "  ▸"
+					optText = selectedStyle.Render(optText)
+				}
+				content.WriteString(fmt.Sprintf("%s %s\n", dropdownCursor, optText))
+			}
+		}
+
+		// Show duration dropdown
 		if i == 1 && isActive && m.cursor == 1 && m.selectingDuration {
 			for j, opt := range m.durationOptions {
 				dropdownCursor := "  "
@@ -241,27 +276,27 @@ func (m model) renderStatusPanel(width, height int) string {
 		style = activePanelStyle
 	}
 
-	var content strings.Builder
-	content.WriteString(panelTitleStyle.Render("Status") + "\n\n")
-
-	// Status message with color
+	// Status message with color (compact, no title)
 	statusStyle := normalTextStyle
 	if strings.Contains(m.statusMsg, "Error") || strings.Contains(m.statusMsg, "failed") {
 		statusStyle = errorStyle
 	} else if strings.Contains(m.statusMsg, "complete") || strings.Contains(m.statusMsg, "Ready") {
 		statusStyle = successStyle
 	}
-	content.WriteString(statusStyle.Render(m.statusMsg))
 
-	return style.Width(width).Height(height).Render(content.String())
+	content := statusStyle.Render(m.statusMsg)
+
+	return style.Width(width).Height(height).Render(content)
 }
 
 func (m model) renderStatusBar() string {
-	helpText := "tab: next panel • 1-5: jump to panel • ↑↓/jk: navigate • enter: select • q: quit"
+	helpText := "s: start capture • f: toggle filter • tab: next panel • 1-5: jump • ↑↓/jk: navigate • q: quit"
 	if m.editing {
 		helpText = "enter: save • esc: cancel"
-	} else if m.selectingDuration {
+	} else if m.selectingDuration || m.selectingSampleRate {
 		helpText = "↑↓/jk: select • enter: confirm • esc: cancel"
+	} else if m.capturing {
+		helpText = "Capturing... please wait"
 	}
 
 	return statusBarStyle.Width(m.width).Render(helpText)

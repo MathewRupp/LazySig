@@ -68,6 +68,9 @@ type model struct {
 	selectingDuration bool // True when selecting from duration dropdown
 	durationOptions   []string
 	durationCursor    int
+	selectingSampleRate bool // True when selecting from sample rate dropdown
+	sampleRateOptions   []string
+	sampleRateCursor    int
 
 	// UI dimensions
 	width  int
@@ -142,11 +145,13 @@ func initialModel() model {
 		outputFile:     "output.csv",
 		sampleRate:     "24000000",
 		filterFrames:   false,
-		durationOptions: []string{"2000ms", "1000ms", "500ms", "250ms", "Custom..."},
-		durationCursor:  2, // Default to 500ms
-		statusMsg:       statusMsg,
-		outputData:      []string{},
-		capturing:       false,
+		durationOptions:     []string{"2000ms", "1000ms", "500ms", "250ms", "Custom..."},
+		durationCursor:      2, // Default to 500ms
+		sampleRateOptions:   []string{"48000000", "24000000", "16000000", "12000000", "8000000", "6000000", "4000000", "2000000", "1000000", "Custom..."},
+		sampleRateCursor:    1, // Default to 24MHz
+		statusMsg:           statusMsg,
+		outputData:          []string{},
+		capturing:           false,
 	}
 }
 
@@ -167,6 +172,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
+		// Handle sample rate dropdown selection
+		if m.selectingSampleRate {
+			switch msg.String() {
+			case "up", "k":
+				if m.sampleRateCursor > 0 {
+					m.sampleRateCursor--
+				}
+			case "down", "j":
+				if m.sampleRateCursor < len(m.sampleRateOptions)-1 {
+					m.sampleRateCursor++
+				}
+			case "enter":
+				selected := m.sampleRateOptions[m.sampleRateCursor]
+				if selected == "Custom..." {
+					// Switch to editing mode for custom sample rate
+					m.selectingSampleRate = false
+					m.editing = true
+					m.editBuffer = m.sampleRate
+				} else {
+					m.sampleRate = selected
+					m.selectingSampleRate = false
+				}
+			case "esc":
+				m.selectingSampleRate = false
+			}
+			return m, nil
+		}
+
 		// Handle duration dropdown selection
 		if m.selectingDuration {
 			switch msg.String() {
@@ -222,6 +255,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "s":
+			// Quick start capture with current settings
+			if len(m.devices) == 0 {
+				m.statusMsg = "Error: No device selected"
+			} else if !m.capturing {
+				m.capturing = true
+				m.captureSpinner = 0
+				m.statusMsg = "Capturing..."
+				return m, tea.Batch(startCapture(m), tick())
+			}
+		case "f":
+			// Toggle filter
+			m.filterFrames = !m.filterFrames
+			if m.filterFrames {
+				m.statusMsg = "Filter: ON"
+			} else {
+				m.statusMsg = "Filter: OFF"
+			}
 		case "tab":
 			// Cycle through panels
 			m.activePanel = (m.activePanel + 1) % 5
@@ -299,9 +350,14 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 	case panelCaptureSettings:
 		if m.cursor == 0 {
-			// Sample Rate
-			m.editing = true
-			m.editBuffer = m.sampleRate
+			// Sample Rate dropdown
+			m.selectingSampleRate = true
+			for i, opt := range m.sampleRateOptions {
+				if opt == m.sampleRate {
+					m.sampleRateCursor = i
+					break
+				}
+			}
 		} else if m.cursor == 1 {
 			// Duration dropdown
 			m.selectingDuration = true
@@ -364,7 +420,10 @@ func (m *model) saveEdit() {
 	case panelCaptureSettings:
 		switch m.cursor {
 		case 0:
-			m.sampleRate = m.editBuffer
+			// Sample rate - validate it's a number
+			if m.editBuffer != "" {
+				m.sampleRate = m.editBuffer
+			}
 		case 1:
 			m.duration = m.editBuffer
 		case 2:
@@ -420,18 +479,26 @@ func (m model) View() string {
 		return "Loading..."
 	}
 
-	// Calculate panel dimensions
+	// Calculate panel dimensions (account for outer border)
 	leftWidth := 35
-	rightWidth := m.width - leftWidth - 4
-	topHeight := m.height - 10
-	bottomHeight := 6
+	rightWidth := m.width - leftWidth - 6
+
+	// Left panels heights
+	devicesHeight := 8
+	configHeight := 12
+	captureHeight := 10
+	leftTotalHeight := devicesHeight + configHeight + captureHeight + 6 // +6 for borders/padding
+
+	// Right panels heights - match left total
+	statusHeight := 3 // Single line of content + padding
+	outputHeight := leftTotalHeight - statusHeight
 
 	// Render panels
-	devicesPanel := m.renderDevicesPanel(leftWidth, 8)
-	configPanel := m.renderConfigPanel(leftWidth, 12)
-	capturePanel := m.renderCapturePanel(leftWidth, 10)
-	outputPanel := m.renderOutputPanel(rightWidth, topHeight)
-	statusPanel := m.renderStatusPanel(rightWidth, bottomHeight)
+	devicesPanel := m.renderDevicesPanel(leftWidth, devicesHeight)
+	configPanel := m.renderConfigPanel(leftWidth, configHeight)
+	capturePanel := m.renderCapturePanel(leftWidth, captureHeight)
+	outputPanel := m.renderOutputPanel(rightWidth, outputHeight)
+	statusPanel := m.renderStatusPanel(rightWidth, statusHeight)
 
 	// Stack left panels vertically
 	leftColumn := lipgloss.JoinVertical(lipgloss.Left,
@@ -452,10 +519,18 @@ func (m model) View() string {
 		rightColumn,
 	)
 
+	// Add border around entire view
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	borderedView := borderStyle.Render(mainView)
+
 	// Add status bar at bottom
 	statusBar := m.renderStatusBar()
 
-	return lipgloss.JoinVertical(lipgloss.Left, mainView, statusBar)
+	return lipgloss.JoinVertical(lipgloss.Left, borderedView, statusBar)
 }
 
 
