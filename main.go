@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,35 +17,34 @@ const (
 	ProtocolI2C
 )
 
-type tickMsg time.Time
-
-type screen int
+type panel int
 
 const (
-	screenDeviceSelection screen = iota
-	screenProtocol
-	screenPinConfig
-	screenCaptureSettings
-	screenCapturing
-	screenResults
+	panelDevices panel = iota
+	panelConfiguration
+	panelCaptureSettings
+	panelOutput
+	panelStatus
 )
 
+type tickMsg time.Time
+
 type model struct {
-	currentScreen screen
-	cursor        int
-	protocol      Protocol
+	activePanel panel
+	cursor      int
+	protocol    Protocol
 
 	// Device selection
 	devices        []LogicAnalyzer
 	selectedDevice int
 
 	// SPI config
-	spiCLK      string
-	spiMOSI     string
-	spiMISO     string
-	spiCS       string
-	spiCPOL     string // Clock polarity (0 or 1)
-	spiCPHA     string // Clock phase (0 or 1)
+	spiCLK  string
+	spiMOSI string
+	spiMISO string
+	spiCS   string
+	spiCPOL string // Clock polarity (0 or 1)
+	spiCPHA string // Clock phase (0 or 1)
 
 	// I2C config
 	i2cSDA     string
@@ -58,29 +58,58 @@ type model struct {
 	filterFrames bool // Filter out frames without valid data bytes
 
 	// State
-	err            error
-	captureFile    string
+	capturing      bool
+	captureErr     error
+	outputData     []string // Captured output lines
+	statusMsg      string
 	editing        bool
 	editBuffer     string
-	captureSpinner int  // For animated progress during capture
+	captureSpinner int // For animated progress during capture
 	selectingDuration bool // True when selecting from duration dropdown
-	durationOptions []string
-	durationCursor  int
+	durationOptions   []string
+	durationCursor    int
+
+	// UI dimensions
+	width  int
+	height int
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().
+	// Panel styles
+	activePanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("170")).
+				Padding(1, 2)
+
+	inactivePanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(1, 2)
+
+	panelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("170")).
-			MarginBottom(1)
+			Foreground(lipgloss.Color("170"))
 
 	selectedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("170")).
 			Bold(true)
 
-	helpStyle = lipgloss.NewStyle().
+	normalTextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
+
+	dimTextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("42"))
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196"))
+
+	statusBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
-			MarginTop(1)
+			Background(lipgloss.Color("235")).
+			Padding(0, 1)
 )
 
 func initialModel() model {
@@ -89,26 +118,35 @@ func initialModel() model {
 		devices = []LogicAnalyzer{}
 	}
 
+	statusMsg := "Ready"
+	if len(devices) == 0 {
+		statusMsg = "No devices found"
+	}
+
 	return model{
-		currentScreen: screenDeviceSelection,
-		cursor:        0,
-		devices:       devices,
+		activePanel:    panelDevices,
+		cursor:         0,
+		devices:        devices,
 		selectedDevice: 0,
-		spiCLK:        "D2",
-		spiMOSI:       "D1",
-		spiMISO:       "D0",
-		spiCS:         "D3",
-		spiCPOL:       "0",
-		spiCPHA:       "0",
-		i2cSDA:        "D0",
-		i2cSCL:        "D1",
-		i2cAddress:    "0x50",
-		duration:      "500ms",
-		outputFile:    "output.csv",
-		sampleRate:    "24000000",
-		filterFrames:  false,
+		protocol:       ProtocolSPI,
+		spiCLK:         "D2",
+		spiMOSI:        "D1",
+		spiMISO:        "D0",
+		spiCS:          "D3",
+		spiCPOL:        "0",
+		spiCPHA:        "0",
+		i2cSDA:         "D0",
+		i2cSCL:         "D1",
+		i2cAddress:     "0x50",
+		duration:       "500ms",
+		outputFile:     "output.csv",
+		sampleRate:     "24000000",
+		filterFrames:   false,
 		durationOptions: []string{"2000ms", "1000ms", "500ms", "250ms", "Custom..."},
 		durationCursor:  2, // Default to 500ms
+		statusMsg:       statusMsg,
+		outputData:      []string{},
+		capturing:       false,
 	}
 }
 
@@ -124,6 +162,10 @@ func tick() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 	case tea.KeyMsg:
 		// Handle duration dropdown selection
 		if m.selectingDuration {
@@ -180,73 +222,89 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "esc":
-			// Allow escape to quit from results screen
-			if m.currentScreen == screenResults {
-				return m, tea.Quit
-			}
+		case "tab":
+			// Cycle through panels
+			m.activePanel = (m.activePanel + 1) % 5
+			m.cursor = 0
+		case "shift+tab":
+			// Cycle backwards through panels
+			m.activePanel = (m.activePanel - 1 + 5) % 5
+			m.cursor = 0
+		case "1":
+			m.activePanel = panelDevices
+			m.cursor = 0
+		case "2":
+			m.activePanel = panelConfiguration
+			m.cursor = 0
+		case "3":
+			m.activePanel = panelCaptureSettings
+			m.cursor = 0
+		case "4":
+			m.activePanel = panelOutput
+			m.cursor = 0
+		case "5":
+			m.activePanel = panelStatus
+			m.cursor = 0
 		case "up", "k":
-			if m.currentScreen != screenResults && m.cursor > 0 {
+			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.currentScreen != screenResults {
-				m.cursor++
-			}
-		case "tab":
-			// Skip to next screen
-			if m.currentScreen == screenPinConfig {
-				m.currentScreen = screenCaptureSettings
-				m.cursor = 0
-			}
+			m.cursor++
 		case "enter":
 			return m.handleEnter()
 		}
 	case tickMsg:
 		// Update spinner animation during capture
-		if m.currentScreen == screenCapturing {
+		if m.capturing {
 			m.captureSpinner++
 			return m, tick()
 		}
 	case captureCompleteMsg:
-		m.err = msg.err
-		m.currentScreen = screenResults
+		m.capturing = false
+		m.captureErr = msg.err
+		if msg.err != nil {
+			m.statusMsg = "Capture failed: " + msg.err.Error()
+		} else {
+			m.statusMsg = "Capture complete: " + m.outputFile
+			// Load output data
+			m.loadOutputData()
+		}
 		return m, nil
 	}
 	return m, nil
 }
 
 func (m model) handleEnter() (tea.Model, tea.Cmd) {
-	switch m.currentScreen {
-	case screenDeviceSelection:
+	switch m.activePanel {
+	case panelDevices:
 		if len(m.devices) > 0 && m.cursor < len(m.devices) {
 			m.selectedDevice = m.cursor
-			m.currentScreen = screenProtocol
-			m.cursor = 0
+			m.statusMsg = "Device selected: " + m.devices[m.selectedDevice].DisplayName
 		}
-	case screenProtocol:
+	case panelConfiguration:
+		// Toggle protocol or edit pin values
 		if m.cursor == 0 {
-			m.protocol = ProtocolSPI
+			// Toggle protocol
+			if m.protocol == ProtocolSPI {
+				m.protocol = ProtocolI2C
+			} else {
+				m.protocol = ProtocolSPI
+			}
+			m.statusMsg = "Protocol changed"
 		} else {
-			m.protocol = ProtocolI2C
-		}
-		m.currentScreen = screenPinConfig
-		m.cursor = 0
-	case screenPinConfig:
-		// Start editing the selected field
-		m.editing = true
-		m.editBuffer = m.getCurrentPinValue()
-	case screenCaptureSettings:
-		// Check if on "Start Capture" option
-		maxCursor := 3
-		if m.cursor == 0 {
-			// Cursor 0: Sample Rate - text edit
+			// Edit pin configuration
 			m.editing = true
-			m.editBuffer = m.getCurrentSettingValue()
+			m.editBuffer = m.getCurrentConfigValue()
+		}
+	case panelCaptureSettings:
+		if m.cursor == 0 {
+			// Sample Rate
+			m.editing = true
+			m.editBuffer = m.sampleRate
 		} else if m.cursor == 1 {
-			// Cursor 1: Duration - dropdown
+			// Duration dropdown
 			m.selectingDuration = true
-			// Set cursor to current duration option
 			for i, opt := range m.durationOptions {
 				if opt == m.duration {
 					m.durationCursor = i
@@ -254,27 +312,32 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 				}
 			}
 		} else if m.cursor == 2 {
-			// Cursor 2: Output File - text edit
+			// Output file
 			m.editing = true
-			m.editBuffer = m.getCurrentSettingValue()
-		} else if m.cursor == maxCursor {
-			// Cursor 3: toggle filter frames
+			m.editBuffer = m.outputFile
+		} else if m.cursor == 3 {
+			// Toggle filter
 			m.filterFrames = !m.filterFrames
-		} else {
-			// Cursor 4: Start capture
-			m.currentScreen = screenCapturing
-			m.captureSpinner = 0
-			return m, tea.Batch(startCapture(m), tick())
+		} else if m.cursor == 4 {
+			// Start capture
+			if len(m.devices) == 0 {
+				m.statusMsg = "Error: No device selected"
+			} else {
+				m.capturing = true
+				m.captureSpinner = 0
+				m.statusMsg = "Capturing..."
+				return m, tea.Batch(startCapture(m), tick())
+			}
 		}
 	}
 	return m, nil
 }
 
 func (m *model) saveEdit() {
-	switch m.currentScreen {
-	case screenPinConfig:
+	switch m.activePanel {
+	case panelConfiguration:
 		if m.protocol == ProtocolSPI {
-			switch m.cursor {
+			switch m.cursor - 1 { // cursor 0 is protocol toggle
 			case 0:
 				m.spiCLK = m.editBuffer
 			case 1:
@@ -289,7 +352,7 @@ func (m *model) saveEdit() {
 				m.spiCPHA = m.editBuffer
 			}
 		} else {
-			switch m.cursor {
+			switch m.cursor - 1 {
 			case 0:
 				m.i2cSDA = m.editBuffer
 			case 1:
@@ -298,7 +361,7 @@ func (m *model) saveEdit() {
 				m.i2cAddress = m.editBuffer
 			}
 		}
-	case screenCaptureSettings:
+	case panelCaptureSettings:
 		switch m.cursor {
 		case 0:
 			m.sampleRate = m.editBuffer
@@ -310,9 +373,9 @@ func (m *model) saveEdit() {
 	}
 }
 
-func (m model) getCurrentPinValue() string {
+func (m model) getCurrentConfigValue() string {
 	if m.protocol == ProtocolSPI {
-		switch m.cursor {
+		switch m.cursor - 1 {
 		case 0:
 			return m.spiCLK
 		case 1:
@@ -327,7 +390,7 @@ func (m model) getCurrentPinValue() string {
 			return m.spiCPHA
 		}
 	} else {
-		switch m.cursor {
+		switch m.cursor - 1 {
 		case 0:
 			return m.i2cSDA
 		case 1:
@@ -339,250 +402,62 @@ func (m model) getCurrentPinValue() string {
 	return ""
 }
 
-func (m model) getCurrentSettingValue() string {
-	switch m.cursor {
-	case 0:
-		return m.sampleRate
-	case 1:
-		return m.duration
-	case 2:
-		return m.outputFile
+func (m *model) loadOutputData() {
+	// Read the output CSV file
+	data, err := os.ReadFile(m.outputFile)
+	if err != nil {
+		m.outputData = []string{"Error reading file: " + err.Error()}
+		return
 	}
-	return ""
+	m.outputData = strings.Split(string(data), "\n")
+	if len(m.outputData) > 100 {
+		m.outputData = m.outputData[:100] // Limit to first 100 lines
+	}
 }
 
 func (m model) View() string {
-	switch m.currentScreen {
-	case screenDeviceSelection:
-		return m.viewDeviceSelection()
-	case screenProtocol:
-		return m.viewProtocolSelection()
-	case screenPinConfig:
-		return m.viewPinConfig()
-	case screenCaptureSettings:
-		return m.viewCaptureSettings()
-	case screenCapturing:
-		return m.viewCapturing()
-	case screenResults:
-		return m.viewResults()
+	if m.width == 0 {
+		return "Loading..."
 	}
-	return ""
+
+	// Calculate panel dimensions
+	leftWidth := 35
+	rightWidth := m.width - leftWidth - 4
+	topHeight := m.height - 10
+	bottomHeight := 6
+
+	// Render panels
+	devicesPanel := m.renderDevicesPanel(leftWidth, 8)
+	configPanel := m.renderConfigPanel(leftWidth, 12)
+	capturePanel := m.renderCapturePanel(leftWidth, 10)
+	outputPanel := m.renderOutputPanel(rightWidth, topHeight)
+	statusPanel := m.renderStatusPanel(rightWidth, bottomHeight)
+
+	// Stack left panels vertically
+	leftColumn := lipgloss.JoinVertical(lipgloss.Left,
+		devicesPanel,
+		configPanel,
+		capturePanel,
+	)
+
+	// Stack right panels vertically
+	rightColumn := lipgloss.JoinVertical(lipgloss.Left,
+		outputPanel,
+		statusPanel,
+	)
+
+	// Join columns horizontally
+	mainView := lipgloss.JoinHorizontal(lipgloss.Top,
+		leftColumn,
+		rightColumn,
+	)
+
+	// Add status bar at bottom
+	statusBar := m.renderStatusBar()
+
+	return lipgloss.JoinVertical(lipgloss.Left, mainView, statusBar)
 }
 
-func (m model) viewDeviceSelection() string {
-	s := titleStyle.Render("Select Logic Analyzer") + "\n\n"
-
-	if len(m.devices) == 0 {
-		s += "No devices found. Please connect a logic analyzer.\n\n"
-		s += helpStyle.Render("q: quit")
-		return s
-	}
-
-	for i, device := range m.devices {
-		cursor := " "
-		displayName := device.DisplayName
-		if m.cursor == i {
-			cursor = ">"
-			displayName = selectedStyle.Render(displayName)
-		}
-		s += fmt.Sprintf("%s %s\n", cursor, displayName)
-	}
-
-	s += "\n" + helpStyle.Render("↑/↓: navigate • enter: select • q: quit")
-	return s
-}
-
-func (m model) viewProtocolSelection() string {
-	s := titleStyle.Render("Select Protocol") + "\n\n"
-
-	choices := []string{"SPI", "I2C"}
-	for i, choice := range choices {
-		cursor := " "
-		if m.cursor == i {
-			cursor = ">"
-			choice = selectedStyle.Render(choice)
-		}
-		s += fmt.Sprintf("%s %s\n", cursor, choice)
-	}
-
-	s += "\n" + helpStyle.Render("↑/↓: navigate • enter: select • q: quit")
-	return s
-}
-
-func (m model) viewPinConfig() string {
-	var s string
-
-	if m.protocol == ProtocolSPI {
-		s = titleStyle.Render("SPI Pin Configuration") + "\n\n"
-
-		fields := []struct{label, value string}{
-			{"CLK", m.spiCLK},
-			{"MOSI", m.spiMOSI},
-			{"MISO", m.spiMISO},
-			{"CS", m.spiCS},
-			{"CPOL", m.spiCPOL},
-			{"CPHA", m.spiCPHA},
-		}
-
-		for i, field := range fields {
-			cursor := " "
-			value := field.value
-			if m.cursor == i {
-				cursor = ">"
-				if m.editing {
-					value = m.editBuffer + "█"
-				} else {
-					value = selectedStyle.Render(value)
-				}
-			}
-			s += fmt.Sprintf("%s %-4s: %s\n", cursor, field.label, value)
-		}
-	} else {
-		s = titleStyle.Render("I2C Pin Configuration") + "\n\n"
-
-		fields := []struct{label, value string}{
-			{"SDA", m.i2cSDA},
-			{"SCL", m.i2cSCL},
-			{"Address", m.i2cAddress},
-		}
-
-		for i, field := range fields {
-			cursor := " "
-			value := field.value
-			if m.cursor == i {
-				cursor = ">"
-				if m.editing {
-					value = m.editBuffer + "█"
-				} else {
-					value = selectedStyle.Render(value)
-				}
-			}
-			s += fmt.Sprintf("%s %-7s: %s\n", cursor, field.label, value)
-		}
-	}
-
-	if m.editing {
-		s += "\n" + helpStyle.Render("enter: save • esc: cancel")
-	} else {
-		s += "\n" + helpStyle.Render("enter: edit • tab: next screen • q: quit")
-	}
-	return s
-}
-
-func (m model) viewCaptureSettings() string {
-	s := titleStyle.Render("Capture Settings") + "\n\n"
-
-	fields := []struct{label, value string}{
-		{"Sample Rate", m.sampleRate + " Hz"},
-		{"Duration", m.duration},
-		{"Output File", m.outputFile},
-	}
-
-	for i, field := range fields {
-		cursor := " "
-		value := field.value
-		if m.cursor == i {
-			cursor = ">"
-			if i == 1 && m.selectingDuration {
-				// Show dropdown for duration
-				value = selectedStyle.Render(value + " ▼")
-			} else if m.editing {
-				// Show edit buffer for any field being edited
-				if i == 0 {
-					// Remove " Hz" suffix for editing sample rate
-					value = m.editBuffer + "█"
-				} else {
-					value = m.editBuffer + "█"
-				}
-			} else {
-				value = selectedStyle.Render(value)
-			}
-		}
-		s += fmt.Sprintf("%s %-11s: %s\n", cursor, field.label, value)
-
-		// Show dropdown menu under Duration field
-		if i == 1 && m.cursor == 1 && m.selectingDuration {
-			for j, opt := range m.durationOptions {
-				dropdownCursor := "  "
-				optText := opt
-				if j == m.durationCursor {
-					dropdownCursor = "  ▸"
-					optText = selectedStyle.Render(opt)
-				}
-				s += fmt.Sprintf("%s %s\n", dropdownCursor, optText)
-			}
-		}
-	}
-
-	// Add filter frames toggle
-	cursor := " "
-	filterText := "Filter Empty: "
-	if m.filterFrames {
-		filterText += "ON"
-	} else {
-		filterText += "OFF"
-	}
-	if m.cursor == 3 {
-		cursor = ">"
-		filterText = selectedStyle.Render(filterText)
-	}
-	s += fmt.Sprintf("\n%s %s\n", cursor, filterText)
-
-	// Add "Start Capture" option
-	cursor = " "
-	startText := "Start Capture"
-	if m.cursor == 4 {
-		cursor = ">"
-		startText = selectedStyle.Render(startText)
-	}
-	s += fmt.Sprintf("%s %s\n", cursor, startText)
-
-	if m.editing {
-		s += "\n" + helpStyle.Render("enter: save • esc: cancel")
-	} else {
-		s += "\n" + helpStyle.Render("enter: edit/start • q: quit")
-	}
-	return s
-}
-
-func (m model) viewCapturing() string {
-	// Spinner frames
-	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	spinner := frames[m.captureSpinner%len(frames)]
-
-	// Progress bar animation
-	barWidth := 40
-	pos := m.captureSpinner % (barWidth * 2)
-	if pos >= barWidth {
-		pos = barWidth*2 - pos - 1
-	}
-
-	bar := ""
-	for i := 0; i < barWidth; i++ {
-		if i == pos {
-			bar += "█"
-		} else if i > pos-3 && i < pos {
-			bar += "▓"
-		} else if i > pos && i < pos+3 {
-			bar += "▓"
-		} else {
-			bar += "░"
-		}
-	}
-
-	return titleStyle.Render("Capturing Data") + "\n\n" +
-		fmt.Sprintf("%s Waiting for trigger or capturing data...\n\n", spinner) +
-		"[" + bar + "]"
-}
-
-func (m model) viewResults() string {
-	if m.err != nil {
-		return titleStyle.Render("Error") + "\n\n" + m.err.Error()
-	}
-	return titleStyle.Render("Capture Complete") + "\n\n" +
-		"Output saved to: " + m.outputFile + "\n\n" +
-		helpStyle.Render("q/esc: quit")
-}
 
 func main() {
 	p := tea.NewProgram(initialModel())
