@@ -521,6 +521,14 @@ func (m model) View() string {
 		return "Loading..."
 	}
 
+	// Render title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("170")).
+		Width(m.width).
+		Align(lipgloss.Center)
+	title := titleStyle.Render("LazySig - Logic Analyzer TUI")
+
 	// Calculate panel dimensions (account for outer border)
 	leftWidth := 35
 	rightWidth := m.width - leftWidth - 6
@@ -572,7 +580,7 @@ func (m model) View() string {
 	// Add status bar at bottom
 	statusBar := m.renderStatusBar()
 
-	return lipgloss.JoinVertical(lipgloss.Left, borderedView, statusBar)
+	return lipgloss.JoinVertical(lipgloss.Left, title, borderedView, statusBar)
 }
 
 
