@@ -1,2 +1,14 @@
+# Claude Code
 .claude/
 CLAUDE.md
+
+# Build artifacts
+lazysig
+
+# Capture files
+*.sr
+*.csv
+
+# Archives
+*.tar.gz
+*.zip

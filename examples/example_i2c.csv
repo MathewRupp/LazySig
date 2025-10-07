@@ -1,0 +1,6 @@
+time,scl,sda
+0.000000042,Start,
+0.000000125,Address write: 50,
+0.000000208,Data write: A5,
+0.000000291,ACK,
+0.000000374,Stop,
