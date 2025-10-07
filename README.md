@@ -59,7 +59,21 @@ fx2lafw:conn=1.43 - fx2lafw - fx2lafw
 
 ## Installation
 
-### Option 1: Install from Source
+### Option 1: Using Make (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/lazysig.git
+cd lazysig
+
+# Install system-wide (requires sudo)
+make install
+
+# OR install to ~/.local/bin (no sudo required)
+make install-user
+```
+
+### Option 2: Manual Build
 
 ```bash
 # Clone the repository
@@ -70,21 +84,8 @@ cd lazysig
 go build -o lazysig
 sudo mv lazysig /usr/local/bin/
 
-# Verify installation
-lazysig --help
-```
-
-### Option 2: Build and Run Locally
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/lazysig.git
-cd lazysig
-
-# Build
+# OR just build and run locally
 go build -o lazysig
-
-# Run directly
 ./lazysig
 ```
 
@@ -92,6 +93,17 @@ go build -o lazysig
 
 ```bash
 go install github.com/yourusername/lazysig@latest
+```
+
+### Available Make Targets
+
+```bash
+make build        # Build the binary
+make install      # Install to /usr/local/bin (requires sudo)
+make install-user # Install to ~/.local/bin (no sudo)
+make clean        # Remove build artifacts
+make run          # Build and run
+make help         # Show all targets
 ```
 
 ## Usage
