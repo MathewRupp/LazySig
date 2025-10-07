@@ -81,9 +81,13 @@ func runCapture(m model) error {
 		channels := fmt.Sprintf("%s=MISO,%s=MOSI,%s=CLK,%s=CS",
 			m.spiMISO, m.spiMOSI, m.spiCLK, m.spiCS)
 		args = append(args, "--channels", channels)
-	} else {
+	} else if m.protocol == ProtocolI2C {
 		channels := fmt.Sprintf("%s=SDA,%s=SCL",
 			m.i2cSDA, m.i2cSCL)
+		args = append(args, "--channels", channels)
+	} else if m.protocol == ProtocolUART {
+		channels := fmt.Sprintf("%s=TX,%s=RX",
+			m.uartTX, m.uartRX)
 		args = append(args, "--channels", channels)
 	}
 
@@ -230,7 +234,7 @@ func decodeToCSV(srFile, outputFile string, protocol Protocol, m model) error {
 				})
 			}
 		}
-	} else {
+	} else if protocol == ProtocolI2C {
 		// I2C decoding
 		var stdout strings.Builder
 		cmd := exec.Command("sigrok-cli", "-i", srFile,
@@ -275,6 +279,64 @@ func decodeToCSV(srFile, outputFile string, protocol Protocol, m model) error {
 					fmt.Sprintf("%.9f", timestamp),
 					data,
 					"",
+				})
+			}
+		}
+	} else if protocol == ProtocolUART {
+		// UART decoding
+		var stdout strings.Builder
+		baudRate := m.uartBaud
+		cmd := exec.Command("sigrok-cli", "-i", srFile,
+			"-P", fmt.Sprintf("uart:tx=TX:rx=RX:baudrate=%s", baudRate),
+			"-A", "uart",
+			"-l", "3")
+		cmd.Stdout = &stdout
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("UART decode failed: %w", err)
+		}
+
+		// Write header
+		writer.Write([]string{"time", "tx", "rx"})
+
+		// Parse UART decoder output
+		lines := strings.Split(stdout.String(), "\n")
+		sampleRate, _ := strconv.ParseFloat(m.sampleRate, 64)
+
+		for _, line := range lines {
+			if strings.Contains(line, "uart-1:") {
+				parts := strings.Fields(line)
+				if len(parts) < 3 {
+					continue
+				}
+
+				sampleRange := parts[0]
+				samples := strings.Split(sampleRange, "-")
+				if len(samples) < 1 {
+					continue
+				}
+
+				startSample, err := strconv.ParseFloat(samples[0], 64)
+				if err != nil {
+					continue
+				}
+
+				timestamp := startSample / sampleRate
+				data := strings.Join(parts[2:], " ")
+
+				// Determine if it's TX or RX based on the line content
+				txData := ""
+				rxData := ""
+				if strings.Contains(line, "TX:") || !strings.Contains(line, "RX:") {
+					txData = data
+				} else {
+					rxData = data
+				}
+
+				writer.Write([]string{
+					fmt.Sprintf("%.9f", timestamp),
+					txData,
+					rxData,
 				})
 			}
 		}

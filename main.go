@@ -15,6 +15,7 @@ type Protocol int
 const (
 	ProtocolSPI Protocol = iota
 	ProtocolI2C
+	ProtocolUART
 )
 
 type panel int
@@ -50,6 +51,11 @@ type model struct {
 	i2cSDA     string
 	i2cSCL     string
 	i2cAddress string
+
+	// UART config
+	uartTX   string
+	uartRX   string
+	uartBaud string
 
 	// Capture settings
 	duration     string
@@ -141,6 +147,9 @@ func initialModel() model {
 		i2cSDA:         "D0",
 		i2cSCL:         "D1",
 		i2cAddress:     "0x50",
+		uartTX:         "D0",
+		uartRX:         "D1",
+		uartBaud:       "115200",
 		duration:       "500ms",
 		outputFile:     "output.csv",
 		sampleRate:     "24000000",
@@ -273,6 +282,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.statusMsg = "Filter: OFF"
 			}
+		case "d":
+			// Jump to duration and open dropdown
+			m.activePanel = panelCaptureSettings
+			m.cursor = 1 // Duration is cursor 1
+			m.selectingDuration = true
+			// Set cursor to current duration option
+			for i, opt := range m.durationOptions {
+				if opt == m.duration {
+					m.durationCursor = i
+					break
+				}
+			}
 		case "tab":
 			// Cycle through panels
 			m.activePanel = (m.activePanel + 1) % 5
@@ -336,13 +357,16 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	case panelConfiguration:
 		// Toggle protocol or edit pin values
 		if m.cursor == 0 {
-			// Toggle protocol
-			if m.protocol == ProtocolSPI {
-				m.protocol = ProtocolI2C
-			} else {
-				m.protocol = ProtocolSPI
+			// Cycle through protocols
+			m.protocol = (m.protocol + 1) % 3
+			switch m.protocol {
+			case ProtocolSPI:
+				m.statusMsg = "Protocol: SPI"
+			case ProtocolI2C:
+				m.statusMsg = "Protocol: I2C"
+			case ProtocolUART:
+				m.statusMsg = "Protocol: UART"
 			}
-			m.statusMsg = "Protocol changed"
 		} else {
 			// Edit pin configuration
 			m.editing = true
@@ -407,7 +431,7 @@ func (m *model) saveEdit() {
 			case 5:
 				m.spiCPHA = m.editBuffer
 			}
-		} else {
+		} else if m.protocol == ProtocolI2C {
 			switch m.cursor - 1 {
 			case 0:
 				m.i2cSDA = m.editBuffer
@@ -415,6 +439,15 @@ func (m *model) saveEdit() {
 				m.i2cSCL = m.editBuffer
 			case 2:
 				m.i2cAddress = m.editBuffer
+			}
+		} else if m.protocol == ProtocolUART {
+			switch m.cursor - 1 {
+			case 0:
+				m.uartTX = m.editBuffer
+			case 1:
+				m.uartRX = m.editBuffer
+			case 2:
+				m.uartBaud = m.editBuffer
 			}
 		}
 	case panelCaptureSettings:
@@ -448,7 +481,7 @@ func (m model) getCurrentConfigValue() string {
 		case 5:
 			return m.spiCPHA
 		}
-	} else {
+	} else if m.protocol == ProtocolI2C {
 		switch m.cursor - 1 {
 		case 0:
 			return m.i2cSDA
@@ -456,6 +489,15 @@ func (m model) getCurrentConfigValue() string {
 			return m.i2cSCL
 		case 2:
 			return m.i2cAddress
+		}
+	} else if m.protocol == ProtocolUART {
+		switch m.cursor - 1 {
+		case 0:
+			return m.uartTX
+		case 1:
+			return m.uartRX
+		case 2:
+			return m.uartBaud
 		}
 	}
 	return ""

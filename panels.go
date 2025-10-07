@@ -68,10 +68,13 @@ func (m model) renderConfigPanel(width, height int) string {
 
 	// Protocol selection
 	protocolText := "Protocol: "
-	if m.protocol == ProtocolSPI {
+	switch m.protocol {
+	case ProtocolSPI:
 		protocolText += "SPI"
-	} else {
+	case ProtocolI2C:
 		protocolText += "I2C"
+	case ProtocolUART:
+		protocolText += "UART"
 	}
 	if isActive && m.cursor == 0 {
 		content.WriteString("> " + selectedStyle.Render(protocolText) + "\n\n")
@@ -102,11 +105,30 @@ func (m model) renderConfigPanel(width, height int) string {
 			}
 			content.WriteString(fmt.Sprintf("%s %-4s: %s\n", cursor, field.label, value))
 		}
-	} else {
+	} else if m.protocol == ProtocolI2C {
 		fields := []struct{ label, value string }{
 			{"SDA", m.i2cSDA},
 			{"SCL", m.i2cSCL},
 			{"Addr", m.i2cAddress},
+		}
+
+		for i, field := range fields {
+			cursor := " "
+			value := field.value
+			if isActive && m.cursor == i+1 {
+				cursor = ">"
+				if m.editing {
+					value = m.editBuffer + "█"
+				}
+				value = selectedStyle.Render(value)
+			}
+			content.WriteString(fmt.Sprintf("%s %-4s: %s\n", cursor, field.label, value))
+		}
+	} else if m.protocol == ProtocolUART {
+		fields := []struct{ label, value string }{
+			{"TX", m.uartTX},
+			{"RX", m.uartRX},
+			{"Baud", m.uartBaud},
 		}
 
 		for i, field := range fields {
@@ -290,7 +312,7 @@ func (m model) renderStatusPanel(width, height int) string {
 }
 
 func (m model) renderStatusBar() string {
-	helpText := "s: start capture • f: toggle filter • tab: next panel • 1-5: jump • ↑↓/jk: navigate • q: quit"
+	helpText := "s: start • f: filter • d: duration • tab: next panel • 1-5: jump • ↑↓/jk: navigate • q: quit"
 	if m.editing {
 		helpText = "enter: save • esc: cancel"
 	} else if m.selectingDuration || m.selectingSampleRate {
