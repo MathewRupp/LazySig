@@ -12,8 +12,40 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type LogicAnalyzer struct {
+	ID          string
+	DisplayName string
+}
+
 type captureCompleteMsg struct {
 	err error
+}
+
+func discoverDevices() ([]LogicAnalyzer, error) {
+	cmd := exec.Command("sigrok-cli", "--scan")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for devices: %w", err)
+	}
+
+	var devices []LogicAnalyzer
+	lines := strings.Split(string(output), "\n")
+
+	// Parse output like: fx2lafw:conn=1.43 - fx2lafw - fx2lafw
+	re := regexp.MustCompile(`fx2lafw:conn=([0-9.]+)`)
+
+	for _, line := range lines {
+		matches := re.FindStringSubmatch(line)
+		if len(matches) > 1 {
+			connID := matches[1]
+			devices = append(devices, LogicAnalyzer{
+				ID:          connID,
+				DisplayName: fmt.Sprintf("fx2lafw - USB %s", connID),
+			})
+		}
+	}
+
+	return devices, nil
 }
 
 // isValidHexData checks if a string contains valid hex byte data
@@ -39,7 +71,10 @@ func runCapture(m model) error {
 
 	// Build sigrok-cli command
 	var args []string
-	args = append(args, "-d", "fx2lafw:conn=1.43")
+
+	// Use selected device
+	deviceID := "fx2lafw:conn=" + m.devices[m.selectedDevice].ID
+	args = append(args, "-d", deviceID)
 
 	// Configure channels based on protocol
 	if m.protocol == ProtocolSPI {

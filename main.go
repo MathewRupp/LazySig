@@ -21,7 +21,8 @@ type tickMsg time.Time
 type screen int
 
 const (
-	screenProtocol screen = iota
+	screenDeviceSelection screen = iota
+	screenProtocol
 	screenPinConfig
 	screenCaptureSettings
 	screenCapturing
@@ -32,6 +33,10 @@ type model struct {
 	currentScreen screen
 	cursor        int
 	protocol      Protocol
+
+	// Device selection
+	devices        []LogicAnalyzer
+	selectedDevice int
 
 	// SPI config
 	spiCLK      string
@@ -79,9 +84,16 @@ var (
 )
 
 func initialModel() model {
+	devices, err := discoverDevices()
+	if err != nil {
+		devices = []LogicAnalyzer{}
+	}
+
 	return model{
-		currentScreen: screenProtocol,
+		currentScreen: screenDeviceSelection,
 		cursor:        0,
+		devices:       devices,
+		selectedDevice: 0,
 		spiCLK:        "D2",
 		spiMOSI:       "D1",
 		spiMISO:       "D0",
@@ -206,6 +218,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.currentScreen {
+	case screenDeviceSelection:
+		if len(m.devices) > 0 && m.cursor < len(m.devices) {
+			m.selectedDevice = m.cursor
+			m.currentScreen = screenProtocol
+			m.cursor = 0
+		}
 	case screenProtocol:
 		if m.cursor == 0 {
 			m.protocol = ProtocolSPI
@@ -335,6 +353,8 @@ func (m model) getCurrentSettingValue() string {
 
 func (m model) View() string {
 	switch m.currentScreen {
+	case screenDeviceSelection:
+		return m.viewDeviceSelection()
 	case screenProtocol:
 		return m.viewProtocolSelection()
 	case screenPinConfig:
@@ -347,6 +367,29 @@ func (m model) View() string {
 		return m.viewResults()
 	}
 	return ""
+}
+
+func (m model) viewDeviceSelection() string {
+	s := titleStyle.Render("Select Logic Analyzer") + "\n\n"
+
+	if len(m.devices) == 0 {
+		s += "No devices found. Please connect a logic analyzer.\n\n"
+		s += helpStyle.Render("q: quit")
+		return s
+	}
+
+	for i, device := range m.devices {
+		cursor := " "
+		displayName := device.DisplayName
+		if m.cursor == i {
+			cursor = ">"
+			displayName = selectedStyle.Render(displayName)
+		}
+		s += fmt.Sprintf("%s %s\n", cursor, displayName)
+	}
+
+	s += "\n" + helpStyle.Render("↑/↓: navigate • enter: select • q: quit")
+	return s
 }
 
 func (m model) viewProtocolSelection() string {
